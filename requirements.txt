@@ -3,3 +3,5 @@ pyserini
 trafilatura
 pyarrow
 tqdm
+sentence-transformers
+faiss-cpu
