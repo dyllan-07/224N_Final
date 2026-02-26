@@ -3,6 +3,8 @@ pyserini
 trafilatura
 pyarrow
 tqdm
+sentence-transformers
+faiss-cpu
 torch>=2.0.0
 transformers>=4.30.0
 lxml_html_clean
