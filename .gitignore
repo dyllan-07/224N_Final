@@ -1,3 +1,9 @@
 venv/
-__pycache__/
 data/notes-large.tsv
+data/bm25_index/
+data/passages/
+data/notes_filtered.parquet
+data/retrieval_results.jsonl
+.DS_Store
+__pycache__/
+*.pyc
