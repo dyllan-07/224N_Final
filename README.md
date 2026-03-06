@@ -19,6 +19,33 @@ Retrieve and score source passages for Community Notes using BM25 and/or hybrid 
 
 ## How to run the pipeline
 
+### Single command (recommended)
+
+Use `run_pipeline.py` to run the full pipeline in one go:
+
+```bash
+# BM25 only (default), skip steps whose outputs already exist, k=5
+python run_pipeline.py
+
+# Both BM25 and hybrid retrieval
+python run_pipeline.py --modes bm25 hybrid
+
+# Hybrid only, force all steps to run, evaluate with k=10
+python run_pipeline.py --modes hybrid --no-skip --k 10
+```
+
+| Option | Description |
+|--------|-------------|
+| `--modes` | Retrieval modes to run: `bm25`, `hybrid`, or both (default: `bm25`). Invalid modes are rejected. |
+| `--skip` | Skip a step if its output file(s) already exist (default: on). |
+| `--no-skip` | Run every step even if outputs exist. |
+| `--k` | k for Recall@k and SupportScore@k in evaluation (default: 5). |
+| `--notes` | Path to reduced notes TSV (default: `data/notes-small.reduced.tsv`). Use `data/notes-large-helpful.reduced.tsv` to run on the helpful-only subset (from `data/recentHelpful.py`). |
+
+The script exits with an error if the notes file is missing (create with `reduce_tsv.py` or `data/recentHelpful.py`; see Utility below).
+
+### Step-by-step (manual)
+
 Run these steps in order. Inputs and outputs are under `data/` and `results/`.
 
 | Step | Command | What it does |
@@ -33,7 +60,22 @@ Run these steps in order. Inputs and outputs are under `data/` and `results/`.
 
 ### Quick copy-paste
 
-**BM25 only:**
+**Single command (BM25 only):**
+```bash
+python run_pipeline.py
+```
+
+**Single command (both modes):**
+```bash
+python run_pipeline.py --modes bm25 hybrid
+```
+
+**Large helpful notes (recommended for full runs):**
+```bash
+python run_pipeline.py --notes data/notes-large-helpful.reduced.tsv --modes bm25 hybrid
+```
+
+**Manual — BM25 only:**
 ```bash
 python preprocess.py
 python retrieve.py --mode bm25
@@ -41,7 +83,7 @@ python test.py
 python evaluate.py
 ```
 
-**Hybrid (BM25 + dense):**
+**Manual — Hybrid (BM25 + dense):**
 ```bash
 python preprocess.py
 python retrieve.py --mode hybrid
@@ -60,7 +102,8 @@ Optional args: `evaluate.py --input <path> --k <int> --notes <parquet>`.
 
 | Path | Description |
 |------|-------------|
-| `data/notes-small.reduced.tsv` | Input notes (e.g. 101 rows with Wikipedia/cited URLs). |
+| `data/notes-small.reduced.tsv` | Default input notes (small test set, ~101 rows). |
+| `data/notes-large-helpful.reduced.tsv` | Helpful-only subset (from `recentHelpful.py`); use with `--notes` for full runs. |
 | `data/notes_filtered.parquet` | Notes used by retrieval + evaluation (from preprocess). |
 | `data/passages/passages.jsonl` | Chunked passages from scraped URLs. |
 | `data/bm25_index/` | Lucene index (built by retrieve). |
@@ -73,6 +116,12 @@ Optional args: `evaluate.py --input <path> --k <int> --notes <parquet>`.
 Reduce a raw Community Notes TSV to rows with Wikipedia links and key columns:
 ```bash
 python reduce_tsv.py data/notes.tsv -o data/notes.reduced.tsv
+```
+
+To use only notes currently rated helpful (for the large set):
+```bash
+python data/recentHelpful.py   # reads notes-large.reduced.tsv + noteStatusHistory, writes notes-large-helpful.reduced.tsv
+python run_pipeline.py --notes data/notes-large-helpful.reduced.tsv
 ```
 
 ## Troubleshooting

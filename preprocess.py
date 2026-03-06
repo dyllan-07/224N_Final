@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-RAW_TSV = os.path.join(DATA_DIR, "notes-small.reduced.tsv")
+DEFAULT_RAW_TSV = os.path.join(DATA_DIR, "notes-small.reduced.tsv")
 NOTES_OUT = os.path.join(DATA_DIR, "notes_filtered.parquet")
 PASSAGES_DIR = os.path.join(DATA_DIR, "passages")
 PASSAGES_OUT = os.path.join(PASSAGES_DIR, "passages.jsonl")
@@ -75,8 +75,17 @@ def chunk_text(text: str, chunk_words: int = CHUNK_WORDS, overlap: int = CHUNK_O
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Scrape cited URLs and chunk into passages")
+    parser.add_argument(
+        "--notes",
+        default=DEFAULT_RAW_TSV,
+        help=f"Path to reduced notes TSV (default: {DEFAULT_RAW_TSV})",
+    )
+    args = parser.parse_args()
+
     # 1. Load and filter notes
-    notes = load_and_filter_notes(RAW_TSV)
+    notes = load_and_filter_notes(args.notes)
     notes.to_parquet(NOTES_OUT, index=False)
     print(f"Saved filtered notes to {NOTES_OUT}")
 
