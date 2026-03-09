@@ -1,6 +1,5 @@
 pandas>=2.0.0
 pyserini
-trafilatura
 pyarrow
 tqdm
 sentence-transformers

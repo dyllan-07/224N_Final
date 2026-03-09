@@ -50,7 +50,7 @@ Run these steps in order. Inputs and outputs are under `data/` and `results/`.
 
 | Step | Command | What it does |
 |------|--------|----------------|
-| **1. Preprocess** | `python preprocess.py` | Reads `data/notes-small.reduced.tsv`, scrapes cited URLs, chunks text → `data/passages/passages.jsonl` and `data/notes_filtered.parquet`. |
+| **1. Preprocess** | `python preprocess.py` | Reads `data/notes-small.reduced.tsv`, fetches cited Wikipedia article text via the MediaWiki API, chunks text → `data/passages/passages.jsonl` and `data/notes_filtered.parquet`. |
 | **2. Retrieve** | `python retrieve.py --mode bm25` | Builds BM25 index (if needed), retrieves top-10 passages per note → `results/bm25_results.jsonl`. |
 | | `python retrieve.py --mode hybrid` | Same, but BM25 + dense retrieval with RRF merge → `results/hybrid_results.jsonl`. |
 | **3. NLI scoring** | `python test.py` | Scores each (query, passage) with RoBERTa-large-MNLI → adds `nli_score` to each row. Default input: `results/bm25_results.jsonl` → output: `results/bm25_nli_results.jsonl`. |
@@ -105,7 +105,7 @@ Optional args: `evaluate.py --input <path> --k <int> --notes <parquet>`.
 | `data/notes-small.reduced.tsv` | Default input notes (small test set, ~101 rows). |
 | `data/notes-large-helpful.reduced.tsv` | Helpful-only subset (from `recentHelpful.py`); use with `--notes` for full runs. |
 | `data/notes_filtered.parquet` | Notes used by retrieval + evaluation (from preprocess). |
-| `data/passages/passages.jsonl` | Chunked passages from scraped URLs. |
+| `data/passages/passages.jsonl` | Chunked passages from MediaWiki API article text. |
 | `data/bm25_index/` | Lucene index (built by retrieve). |
 | `results/bm25_results.jsonl` | BM25 retrieval output (passage-level). |
 | `results/hybrid_results.jsonl` | Hybrid retrieval output. |
