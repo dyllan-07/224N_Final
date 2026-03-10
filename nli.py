@@ -1,5 +1,5 @@
 """
-NLI-based support scoring using FacebookAI/roberta-large-mnli.
+NLI-based support scoring using a DeBERTa-v3-base model fine-tuned on MNLI.
 
 Given a query q (post + community note) and a candidate passage p (excerpt),
 computes how well p supports the claim in q via entailment probability.
@@ -10,26 +10,40 @@ from __future__ import annotations
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-MODEL_ID = "FacebookAI/roberta-large-mnli"
+# Public MNLI model (DeBERTa v3 base); microsoft/deberta-v3-base is pretrained-only, no NLI labels
+MODEL_ID = "MoritzLaurer/DeBERTa-v3-base-mnli"
 ENTAILMENT_LABEL = "ENTAILMENT"
-DEFAULT_MAX_LENGTH = 256
+DEFAULT_MAX_LENGTH = 192
+
+
+def _infer_device() -> str:
+    """Pick best available device: CUDA > MPS (Apple Silicon) > CPU."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def _get_entailment_id(model) -> int:
     """Return the label id for ENTAILMENT from the model config."""
-    if hasattr(model.config, "label2id"):
-        return model.config.label2id[ENTAILMENT_LABEL]
     id2label = getattr(model.config, "id2label", {})
+    if not id2label and hasattr(model.config, "id2label"):
+        id2label = dict(model.config.id2label)
     for idx, name in id2label.items():
-        if name == ENTAILMENT_LABEL:
+        if (name or "").upper() == ENTAILMENT_LABEL:
             return int(idx)
-    return 2  # fallback: FacebookAI/roberta-large-mnli uses 2 for ENTAILMENT
+    if hasattr(model.config, "label2id"):
+        for key in (ENTAILMENT_LABEL, "entailment"):
+            if key in model.config.label2id:
+                return int(model.config.label2id[key])
+    return 2  # fallback: MNLI models typically use 2 for ENTAILMENT
 
 
 class NLISupportScorer:
     """
     Scores how well a candidate passage supports a claim (query) using
-    roberta-large-mnli. Support score = P(entailment | premise=passage, hypothesis=query).
+    an MNLI-finetuned model (e.g. DeBERTa-v3-base-mnli). Support score = P(entailment | premise=passage, hypothesis=query).
     """
 
     def __init__(
@@ -40,7 +54,7 @@ class NLISupportScorer:
     ):
         self.model_id = model_id
         self.max_length = max_length
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or _infer_device()
         self._model = None
         self._tokenizer = None
         self._entailment_id = None

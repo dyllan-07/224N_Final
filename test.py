@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 DEFAULT_RETRIEVAL_RESULTS = os.path.join(RESULTS_DIR, "bm25_results.jsonl")
-BATCH_SIZE = 32
+BATCH_SIZE = 128
 
 
 def load_retrieval_results(path: str) -> list:

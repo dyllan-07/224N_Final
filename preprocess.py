@@ -1,14 +1,15 @@
 """
 preprocess.py
 Load Community Notes TSV, filter to notes with cited URLs,
-fetch Wikipedia article text via the MediaWiki API, chunk it,
+fetch Wikipedia article text via the MediaWiki API (Option C: hybrid expansion
+with depth 1, 10 links per seed), deduplicate URLs and passages, chunk,
 and save passages as JSONL for Pyserini.
 """
 
 import json
 import os
 import re
-from urllib.parse import parse_qs, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 import pandas as pd
@@ -27,6 +28,11 @@ MIN_TEXT_WORDS = 20
 HTTP_TIMEOUT_SECS = 30
 USER_AGENT = "CS224N-Final-Project/1.0 (MediaWiki API preprocessing)"
 
+# Option C hybrid expansion: depth 1, up to this many outlinks per seed article
+EXPANSION_LINK_LIMIT = 5
+# Main namespace only (0 = articles)
+MW_NAMESPACE_MAIN = 0
+
 
 def load_and_filter_notes(path: str) -> pd.DataFrame:
     """Load the TSV and keep only notes that cite at least one URL."""
@@ -42,6 +48,17 @@ def load_and_filter_notes(path: str) -> pd.DataFrame:
 def extract_urls(summary: str) -> list[str]:
     """Pull URLs out of the summary text."""
     return re.findall(r"https?://[^\s,\]\)\"]+", str(summary))
+
+
+def normalize_url_for_dedup(url: str) -> str:
+    """Normalize URL for use as a dedup key (strip fragment, trailing slash, lowercase host)."""
+    u = (url or "").strip().rstrip("/")
+    parsed = urlparse(u)
+    if not parsed.scheme or not parsed.netloc:
+        return u
+    host = normalize_wikipedia_host(parsed.netloc)
+    path = (parsed.path or "/").split("#", 1)[0].rstrip("/") or "/"
+    return f"{parsed.scheme or 'https'}://{host}{path}"
 
 
 def normalize_wikipedia_host(host: str) -> str:
@@ -87,6 +104,59 @@ def wikipedia_title_from_url(url: str) -> str | None:
     if not title or title.startswith("Special:"):
         return None
     return title
+
+
+def wikipedia_url_from_title(seed_url: str, title: str) -> str | None:
+    """Build a full Wikipedia article URL from a seed URL (for host/scheme) and page title."""
+    parsed = urlparse(seed_url)
+    host = normalize_wikipedia_host(parsed.netloc)
+    if not host or not title.strip():
+        return None
+    scheme = parsed.scheme or "https"
+    path = "/wiki/" + quote(title.strip().replace(" ", "_"), safe="/")
+    return f"{scheme}://{host}{path}"
+
+
+def fetch_wikipedia_outlinks(url: str, limit: int = EXPANSION_LINK_LIMIT) -> list[str]:
+    """Return up to `limit` main-namespace outlinks from a Wikipedia article (full URLs)."""
+    endpoint = wikipedia_api_endpoint(url)
+    title = wikipedia_title_from_url(url)
+    if endpoint is None or title is None:
+        return []
+
+    query = urlencode(
+        {
+            "action": "query",
+            "format": "json",
+            "formatversion": "2",
+            "prop": "links",
+            "titles": title,
+            "plnamespace": MW_NAMESPACE_MAIN,
+            "pllimit": limit,
+        }
+    )
+    request = Request(
+        f"{endpoint}?{query}",
+        headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+    )
+    try:
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECS) as response:
+            payload = json.load(response)
+        pages = payload.get("query", {}).get("pages", [])
+        if not pages:
+            return []
+        links = pages[0].get("links") or []
+        out = []
+        for link in links[:limit]:
+            t = (link.get("title") or "").strip()
+            if not t:
+                continue
+            full_url = wikipedia_url_from_title(url, t)
+            if full_url:
+                out.append(full_url)
+        return out
+    except Exception:
+        return []
 
 
 def fetch_wikipedia_text(url: str) -> str | None:
@@ -153,7 +223,7 @@ def chunk_text(text: str, chunk_words: int = CHUNK_WORDS, overlap: int = CHUNK_O
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        description="Fetch cited Wikipedia article text and chunk it into passages"
+        description="Fetch cited Wikipedia article text (with Option C expansion) and chunk into passages"
     )
     parser.add_argument(
         "--notes",
@@ -167,27 +237,56 @@ def main():
     notes.to_parquet(NOTES_OUT, index=False)
     print(f"Saved filtered notes to {NOTES_OUT}")
 
-    # 2. Fetch cited Wikipedia articles and chunk into passages
+    # 2. Build seed URLs (Wikipedia only) and url -> set of note_ids
+    url_to_notes: dict[str, set[str]] = {}
+    for _, row in notes.iterrows():
+        nid = str(row["noteId"])
+        for url in extract_urls(row["summary"]):
+            if not is_wikipedia_url(url):
+                continue
+            key = normalize_url_for_dedup(url)
+            url_to_notes.setdefault(key, set()).add(nid)
+    seed_urls = set(url_to_notes.keys())
+    print(f"Found {len(seed_urls)} unique cited Wikipedia URLs (seeds)")
+
+    # 3. Expansion depth 1: for each seed, add up to EXPANSION_LINK_LIMIT outlinks; inherit note_ids
+    for seed_url in tqdm(seed_urls, desc=f"Expanding (depth 1, {EXPANSION_LINK_LIMIT} links)"):
+        outlinks = fetch_wikipedia_outlinks(seed_url, limit=EXPANSION_LINK_LIMIT)
+        note_ids = url_to_notes[seed_url]
+        for link_url in outlinks:
+            key = normalize_url_for_dedup(link_url)
+            url_to_notes.setdefault(key, set()).update(note_ids)
+    all_urls = sorted(url_to_notes.keys())  # deterministic order; URL-level dedup
+    expanded_count = len(all_urls) - len(seed_urls)
+    print(f"After expansion: {len(all_urls)} unique URLs ({expanded_count} added)")
+
+    # 4. Fetch each URL once (URL-level dedup), chunk, then passage-level dedup
     os.makedirs(PASSAGES_DIR, exist_ok=True)
     passage_id = 0
-    with open(PASSAGES_OUT, "w") as f:
-        for _, row in tqdm(notes.iterrows(), total=len(notes), desc="Fetching & chunking"):
-            urls = extract_urls(row["summary"])
-            for url in urls:
-                text = fetch_wikipedia_text(url)
-                if not text or len(text.split()) < MIN_TEXT_WORDS:
-                    continue
-                for chunk in chunk_text(text):
-                    record = {
-                        "id": str(passage_id),
-                        "contents": chunk,
-                        "note_id": str(row["noteId"]),
-                        "source_url": url,
-                    }
-                    f.write(json.dumps(record) + "\n")
-                    passage_id += 1
+    seen_chunk_key: set[tuple[str, str]] = set()  # (normalized_url, chunk_text) for passage dedup
 
-    print(f"Saved {passage_id} passages to {PASSAGES_OUT}")
+    with open(PASSAGES_OUT, "w") as f:
+        for url in tqdm(all_urls, desc="Fetching & chunking"):
+            text = fetch_wikipedia_text(url)
+            if not text or len(text.split()) < MIN_TEXT_WORDS:
+                continue
+            note_ids_for_url = url_to_notes[url]
+            rep_note_id = min(note_ids_for_url) if note_ids_for_url else ""
+            for chunk in chunk_text(text):
+                chunk_key = (url, chunk)
+                if chunk_key in seen_chunk_key:
+                    continue
+                seen_chunk_key.add(chunk_key)
+                record = {
+                    "id": str(passage_id),
+                    "contents": chunk,
+                    "note_id": rep_note_id,
+                    "source_url": url,
+                }
+                f.write(json.dumps(record) + "\n")
+                passage_id += 1
+
+    print(f"Saved {passage_id} passages to {PASSAGES_OUT} (URL and passage deduplicated)")
 
 
 if __name__ == "__main__":
