@@ -28,9 +28,33 @@ def extract_urls(summary: str) -> list[str]:
 
 
 def normalize_url(url: str) -> str:
-    """Normalize URL for matching (strip, remove trailing slash)."""
+    """
+    Normalize a Wikipedia URL to a canonical article slug for robust matching.
+
+    Handles: http/https, www/mobile subdomains, percent-encoding vs underscores,
+    fragment identifiers, query parameters, and case in the article title.
+    Falls back to lowercased stripped URL for non-Wikipedia URLs.
+    """
+    from urllib.parse import urlparse, unquote
+
     u = (url or "").strip().rstrip("/")
-    return u
+    if not u:
+        return u
+
+    try:
+        parsed = urlparse(u)
+        host = parsed.hostname or ""
+        # Normalize Wikipedia URLs to just the article slug
+        if "wikipedia.org" in host:
+            # Strip fragment and query, decode percent-encoding, replace spaces with _
+            path = unquote(parsed.path).strip("/")
+            # path is typically "wiki/Article_Title"
+            slug = path.lower().replace(" ", "_")
+            return slug
+    except Exception:
+        pass
+
+    return u.lower()
 
 
 def load_gold_sources_by_note(notes_path: str) -> dict[str, set[str]]:
