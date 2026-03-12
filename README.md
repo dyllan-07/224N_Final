@@ -1,6 +1,6 @@
 # 224N Final — Retrieval for Community Notes
 
-Retrieve and score source passages for Community Notes using BM25 and/or hybrid (BM25 + dense) retrieval, then evaluate with NLI-based support scoring.
+Retrieve and score source passages for Community Notes using BM25, hybrid (BM25 + dense), hybrid+rerank, or Gemini parametric retrieval, then evaluate with NLI-based support scoring.
 
 ## Setup
 
@@ -8,6 +8,12 @@ Retrieve and score source passages for Community Notes using BM25 and/or hybrid 
    ```bash
    pip install -r requirements.txt
    ```
+
+2. **For Gemini retrieval** — create a `.env` file in the project root:
+   ```
+   GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+   ```
+   Then authenticate: `gcloud auth application-default login`
 
 2. **Java 11+** (required by Pyserini for the BM25 index)
    - **Apple Silicon Mac**: Use an ARM64 JDK (e.g. [Eclipse Temurin](https://adoptium.net/) or `conda install -c conda-forge openjdk=21`). Then:
@@ -57,6 +63,8 @@ Run these steps in order. Inputs and outputs are under `data/` and `results/`.
 | | `python test.py -i results/hybrid_results.jsonl` | Same for hybrid results → `results/hybrid_nli_results.jsonl`. |
 | **4. Evaluate** | `python evaluate.py` | Computes **Recall@k** and **SupportScore@k**. Default: reads `results/bm25_nli_results.jsonl`, uses `--k 5`. Prints the two scores. |
 | | `python evaluate.py -i results/hybrid_nli_results.jsonl --k 10` | Evaluate hybrid NLI results with k=10. |
+| **Gemini baseline** | `python gemini_retrieve.py` | Queries Gemini 2.0 Flash (Vertex AI) for top-5 Wikipedia URLs per note → `results/gemini_results.jsonl`. No passage text; Recall@k only. |
+| | `python evaluate.py -i results/gemini_results.jsonl --k 5` | Evaluate Gemini results (SupportScore will be 0 — no NLI scores). |
 
 ### Quick copy-paste
 
@@ -96,6 +104,19 @@ python evaluate.py -i results/hybrid_nli_results.jsonl
 - **Recall@k**: Fraction of notes where at least one of the top-k *sources* returned is a cited (gold) URL. Gold URLs come from the note’s `summary`; `evaluate.py` reads `data/notes_filtered.parquet` to get them.
 - **SupportScore@k**: Mean NLI entailment score over the top-k passages per note (how well excerpts support the claim), using the `nli_score` values already in the NLI results file.
 
+### Benchmark results
+
+BM25, Hybrid, and Hybrid+Rerank are evaluated on the 100-note test set. Gemini is a side experiment evaluated on a 1,000-note subset (full 14k-note run is infeasible at ~1.2s/note via Vertex AI).
+
+| System | Notes | Recall@5 | SupportScore@5 |
+|--------|-------|----------|----------------|
+| BM25 | 100 | 0.8586 | 0.6233 |
+| Hybrid (BM25 + dense RRF) | 100 | 0.8900 | 0.6238 |
+| Hybrid + Rerank | 100 | 0.8700 | 0.6190 |
+| Gemini 2.0 Flash (parametric) | 1,000 | 0.3980 | 0.0000 |
+
+Gemini SupportScore is 0 — it returns URLs only (no passage text for NLI scoring).
+
 Optional args: `evaluate.py --input <path> --k <int> --notes <parquet>`.
 
 ## Data and results layout
@@ -110,6 +131,7 @@ Optional args: `evaluate.py --input <path> --k <int> --notes <parquet>`.
 | `results/bm25_results.jsonl` | BM25 retrieval output (passage-level). |
 | `results/hybrid_results.jsonl` | Hybrid retrieval output. |
 | `results/*_nli_results.jsonl` | Retrieval results + `nli_score` (from test.py). |
+| `results/gemini_results.jsonl` | Gemini parametric retrieval output. Fields: `note_id`, `query`, `rank`, `source_url`. |
 
 ## Utility
 
