@@ -59,7 +59,11 @@ def normalize_url(url: str) -> str:
 
 def load_gold_sources_by_note(notes_path: str) -> dict[str, set[str]]:
     """Load notes and return for each note_id the set of normalized cited URLs."""
-    df = pd.read_parquet(notes_path)
+    if notes_path.endswith(".tsv") or notes_path.endswith(".csv"):
+        sep = "\t" if notes_path.endswith(".tsv") else ","
+        df = pd.read_csv(notes_path, sep=sep, dtype=str)
+    else:
+        df = pd.read_parquet(notes_path)
     gold = {}
     for _, row in df.iterrows():
         nid = str(row["noteId"])

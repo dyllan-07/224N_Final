@@ -36,7 +36,7 @@ PASSAGE_IDS_PATH = os.path.join(DATA_DIR, "passage_ids.json")
 
 DENSE_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-BM25_TOP_K = 10
+BM25_TOP_K = 10  # default; overridden by --top-k
 
 
 def build_index():
@@ -170,9 +170,9 @@ def retrieve_bm25(notes, top_k):
     return results
 
 
-def run_bm25(notes):
+def run_bm25(notes, top_k=BM25_TOP_K):
     """Run BM25-only retrieval and write results."""
-    bm25_results = retrieve_bm25(notes, BM25_TOP_K)
+    bm25_results = retrieve_bm25(notes, top_k)
     searcher = LuceneSearcher(INDEX_DIR)
 
     output = []
@@ -191,17 +191,15 @@ def run_bm25(notes):
     return output
 
 
-def run_hybrid(notes):
+def run_hybrid(notes, top_k=BM25_TOP_K):
     """Run hybrid (BM25 + dense) retrieval with RRF merge."""
-    # BM25 top-10
-    bm25_results = retrieve_bm25(notes, BM25_TOP_K)
+    bm25_results = retrieve_bm25(notes, top_k)
 
-    # Dense top-10
     queries = [
         re.sub(r"https?://[^\s,\]\)\"]+", "", str(row["summary"])).strip()
         for _, row in notes.iterrows()
     ]
-    dense_results = retrieve_dense(queries, BM25_TOP_K)
+    dense_results = retrieve_dense(queries, top_k)
 
     # Load passage texts via searcher for output
     searcher = LuceneSearcher(INDEX_DIR)
@@ -209,7 +207,7 @@ def run_hybrid(notes):
     output = []
     for i, (row, query, bm25_hits) in enumerate(bm25_results):
         dense_hits = dense_results[i]
-        merged = merge_results(bm25_hits, dense_hits, top_k=BM25_TOP_K)
+        merged = merge_results(bm25_hits, dense_hits, top_k=top_k)
 
         for rank, (pid, rrf_score) in enumerate(merged):
             doc = json.loads(searcher.doc(pid).raw())
@@ -229,6 +227,8 @@ def main():
     parser = argparse.ArgumentParser(description="Retrieve passages for Community Notes")
     parser.add_argument("--mode", choices=["bm25", "hybrid"], default="bm25",
                         help="Retrieval mode: bm25 (default) or hybrid (BM25 + dense)")
+    parser.add_argument("--top-k", type=int, default=BM25_TOP_K,
+                        help=f"Passages to retrieve per note (default: {BM25_TOP_K})")
     args = parser.parse_args()
 
     # Always need BM25 index
@@ -239,10 +239,10 @@ def main():
     results_path = os.path.join(RESULTS_DIR, f"{args.mode}_results.jsonl")
 
     if args.mode == "bm25":
-        results = run_bm25(notes)
+        results = run_bm25(notes, top_k=args.top_k)
     elif args.mode == "hybrid":
         build_dense_index()
-        results = run_hybrid(notes)
+        results = run_hybrid(notes, top_k=args.top_k)
 
     with open(results_path, "w") as f:
         for r in results:

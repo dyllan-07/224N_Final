@@ -41,6 +41,10 @@ def main():
         default=None,
         help="Path for NLI-scored output JSONL (default: results/nli_results.jsonl or derived from input name)",
     )
+    parser.add_argument(
+        "--top-k", type=int, default=None,
+        help="Only NLI-score rows with rank <= top-k (default: score all rows)",
+    )
     args = parser.parse_args()
 
     retrieval_path = args.input
@@ -50,6 +54,8 @@ def main():
         )
 
     results = load_retrieval_results(retrieval_path)
+    if args.top_k is not None:
+        results = [r for r in results if r.get("rank", 1) <= args.top_k]
     if not results:
         print("No retrieval results to score.")
         return

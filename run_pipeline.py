@@ -17,7 +17,7 @@ DEFAULT_NOTES_TSV = os.path.join(DATA_DIR, "notes-small.reduced.tsv")
 PASSAGES_JSONL = os.path.join(DATA_DIR, "passages", "passages.jsonl")
 NOTES_PARQUET = os.path.join(DATA_DIR, "notes_filtered.parquet")
 
-VALID_MODES = {"bm25", "hybrid"}
+VALID_MODES = {"bm25", "hybrid", "hybrid-rerank"}
 
 
 def parse_args():
@@ -99,17 +99,41 @@ def main():
 
     # 2. Retrieve (per mode)
     for mode in args.modes:
-        results_file = os.path.join(RESULTS_DIR, f"{mode}_results.jsonl")
+        retrieve_mode = "hybrid" if mode == "hybrid-rerank" else mode
+        top_k = 50 if mode == "hybrid-rerank" else 10
+        results_file = os.path.join(RESULTS_DIR, f"{retrieve_mode}_results.jsonl")
         skip_retrieve = args.skip and os.path.isfile(results_file)
         if skip_retrieve:
             print(f"[run_pipeline] Retrieve ({mode}): skipped ({results_file} exists)")
         else:
-            run([sys.executable, "retrieve.py", "--mode", mode], f"Retrieve ({mode})")
+            run(
+                [sys.executable, "retrieve.py", "--mode", retrieve_mode, "--top-k", str(top_k)],
+                f"Retrieve ({mode})",
+            )
+
+    # 2b. Rerank (hybrid-rerank mode only)
+    for mode in args.modes:
+        if mode != "hybrid-rerank":
+            continue
+        reranked_file = os.path.join(RESULTS_DIR, "hybrid_reranked_results.jsonl")
+        hybrid_file = os.path.join(RESULTS_DIR, "hybrid_results.jsonl")
+        skip_rerank = args.skip and os.path.isfile(reranked_file)
+        if skip_rerank:
+            print(f"[run_pipeline] Rerank: skipped ({reranked_file} exists)")
+        else:
+            run(
+                [sys.executable, "rerank.py", "-i", hybrid_file],
+                "Rerank",
+            )
 
     # 3. NLI (per mode)
     for mode in args.modes:
-        retrieval_file = os.path.join(RESULTS_DIR, f"{mode}_results.jsonl")
-        nli_file = os.path.join(RESULTS_DIR, f"{mode}_nli_results.jsonl")
+        if mode == "hybrid-rerank":
+            retrieval_file = os.path.join(RESULTS_DIR, "hybrid_reranked_results.jsonl")
+            nli_file = os.path.join(RESULTS_DIR, "hybrid_reranked_nli_results.jsonl")
+        else:
+            retrieval_file = os.path.join(RESULTS_DIR, f"{mode}_results.jsonl")
+            nli_file = os.path.join(RESULTS_DIR, f"{mode}_nli_results.jsonl")
         skip_nli = args.skip and os.path.isfile(nli_file)
         if not os.path.isfile(retrieval_file):
             print(f"[run_pipeline] NLI ({mode}): skipped (no retrieval results: {retrieval_file})")
@@ -117,14 +141,17 @@ def main():
         if skip_nli:
             print(f"[run_pipeline] NLI ({mode}): skipped ({nli_file} exists)")
         else:
-            run(
-                [sys.executable, "test.py", "-i", retrieval_file],
-                f"NLI ({mode})",
-            )
+            nli_cmd = [sys.executable, "test.py", "-i", retrieval_file]
+            if mode == "hybrid":
+                nli_cmd += ["--top-k", "10"]
+            run(nli_cmd, f"NLI ({mode})")
 
     # 4. Evaluate (per mode)
     for mode in args.modes:
-        nli_file = os.path.join(RESULTS_DIR, f"{mode}_nli_results.jsonl")
+        if mode == "hybrid-rerank":
+            nli_file = os.path.join(RESULTS_DIR, "hybrid_reranked_nli_results.jsonl")
+        else:
+            nli_file = os.path.join(RESULTS_DIR, f"{mode}_nli_results.jsonl")
         if not os.path.isfile(nli_file):
             print(f"[run_pipeline] Evaluate ({mode}): skipped (no NLI results: {nli_file})")
             continue

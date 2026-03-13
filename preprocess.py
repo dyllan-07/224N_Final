@@ -9,6 +9,7 @@ and save passages as JSONL for Pyserini.
 import json
 import os
 import re
+import time
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -249,16 +250,9 @@ def main():
     seed_urls = set(url_to_notes.keys())
     print(f"Found {len(seed_urls)} unique cited Wikipedia URLs (seeds)")
 
-    # 3. Expansion depth 1: for each seed, add up to EXPANSION_LINK_LIMIT outlinks; inherit note_ids
-    for seed_url in tqdm(seed_urls, desc=f"Expanding (depth 1, {EXPANSION_LINK_LIMIT} links)"):
-        outlinks = fetch_wikipedia_outlinks(seed_url, limit=EXPANSION_LINK_LIMIT)
-        note_ids = url_to_notes[seed_url]
-        for link_url in outlinks:
-            key = normalize_url_for_dedup(link_url)
-            url_to_notes.setdefault(key, set()).update(note_ids)
+    # 3. Expansion disabled — seeds only
     all_urls = sorted(url_to_notes.keys())  # deterministic order; URL-level dedup
-    expanded_count = len(all_urls) - len(seed_urls)
-    print(f"After expansion: {len(all_urls)} unique URLs ({expanded_count} added)")
+    print(f"Expansion disabled: using {len(all_urls)} seed URLs only")
 
     # 4. Fetch each URL once (URL-level dedup), chunk, then passage-level dedup
     os.makedirs(PASSAGES_DIR, exist_ok=True)
@@ -268,6 +262,7 @@ def main():
     with open(PASSAGES_OUT, "w") as f:
         for url in tqdm(all_urls, desc="Fetching & chunking"):
             text = fetch_wikipedia_text(url)
+            time.sleep(0.3)
             if not text or len(text.split()) < MIN_TEXT_WORDS:
                 continue
             note_ids_for_url = url_to_notes[url]
